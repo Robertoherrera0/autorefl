@@ -8,7 +8,7 @@ from reflred.candor import edges
 from reflred.resolution import divergence
 
 CALIBRATION_PATH = Path(__file__).parent / 'calibration'
-
+CALIBRATION_PATH_GANS = Path(__file__).parent / 'gans_calibration'
 def q2a(q, L):
     return np.degrees(np.arcsin(np.array(q)*L/(4*np.pi)))
 
@@ -353,3 +353,75 @@ class CANDOR(ReflectometerBase):
         x = np.array(x, ndmin=1)
         return np.broadcast_to(self._dL, (len(x), len(self._L)))
     
+class GANS(ReflectometerBase):
+    """ GANS Reflectometer
+    x = Q """
+    def __init__(self) -> None:
+        super().__init__()
+        self._L = np.array([2.35])
+        self._dL = 0.019959062306768447 * self._L   #sigma 
+        self.xlabel = r'$Q_z$ (' + u'\u212b' + r'$^{-1}$)'
+        self.name = 'GANS'
+        self.resolution = 'normal'
+        self.topspeed = 0.6
+        self.basespeed = 0.0006  # derived from 0.999s ramp to topspeed at this acceleration
+        self.acceleration = 0.6
+        # Detector arm (two-theta) motion profile, calculated from motor config
+
+        # instrument geometry
+        self._L12 = 1901.
+        self._L2S = 10.
+        self._LS3 = 10.
+        self._L34 = 600.
+        self.footprint = 45.
+        self._S3Offset = 3.  # real door slit S3 value not yet known - this data predates slit 3 installation on GANS
+        self._R12 = 3.
+        self.sample_width = np.inf
+
+        # load calibration files
+        try:
+            d_intens = np.loadtxt(CALIBRATION_PATH_GANS / 'gans_intensity.refl')
+
+            self.p_intens = np.polyfit(d_intens[:,0], d_intens[:,1], 3, w=1/d_intens[:,2])
+        except OSError:
+            warnings.warn('GANS calibration files not found, using defaults')
+            self.p_intens = np.array([0., 0., 0., 0.])
+
+        # background rate: 1.133077e-02 +/- 4.077228e-04 counts/s
+
+    def x2q(self, x):
+        return x
+
+    def x2a(self, x):
+        return q2a(x, self._L)
+
+    def qrange2xrange(self, bounds):
+        return min(bounds), max(bounds)
+
+    def intensity(self, x):
+        news1 = self.get_slits(x)[0]
+        incident_neutrons = np.polyval(self.p_intens, news1)
+
+        return np.array(incident_neutrons, ndmin=2).T
+    def meastime(self, x, totaltime):
+        q = self.x2q(np.array(x))
+        boundary = 0.0209  # Qz boundary between the two GANS scan regions, 1/Ang
+        region_time = np.where(q < boundary, 60., 270.)  # seconds per point, real GANS practice
+        return region_time
+
+    def T(self, x):
+        x = np.array(x, ndmin=1)
+        return np.broadcast_to(self.x2a(x), (len(self._L), len(x))).T
+
+    def dT(self, x):
+        x = np.array(x, ndmin=1)
+        dTs = super().dT(x).T
+        return np.broadcast_to(dTs, (len(self._L), len(x))).T
+
+    def L(self, x):
+        x = np.array(x, ndmin=1)
+        return np.broadcast_to(self._L, (len(x), len(self._L)))
+
+    def dL(self, x):
+        x = np.array(x, ndmin=1)
+        return np.broadcast_to(self._dL, (len(x), len(self._L)))
